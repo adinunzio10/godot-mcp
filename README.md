@@ -79,12 +79,18 @@ This direct feedback loop helps AI assistants like Claude understand what works 
 - **UID Management** (for Godot 4.4+):
   - Get UID for specific files
   - Update UID references by resaving resources
+- **GUT Unit Testing Support**:
+  - Run GUT (Godot Unit Testing) tests from command line
+  - Discover available test files in projects
+  - Create new test files with templates (basic or advanced)
+  - Parse and format test results with detailed reporting
 
 ## Requirements
 
 - [Godot Engine](https://godotengine.org/download) installed on your system
 - Node.js and npm
 - An AI assistant that supports MCP (Cline, Cursor, etc.)
+- **For GUT Testing**: [GUT addon](https://github.com/bitwes/Gut) installed in your Godot project (available from Asset Library)
 
 ## Installation and Configuration
 
@@ -129,7 +135,10 @@ Add to your Cline MCP settings file (`~/Library/Application Support/Code/User/gl
         "export_mesh_library",
         "save_scene",
         "get_uid",
-        "update_project_uids"
+        "update_project_uids",
+        "run_gut_tests",
+        "discover_gut_tests",
+        "create_gut_test"
       ]
     }
   }
@@ -226,6 +235,16 @@ Once configured, your AI assistant will automatically run the MCP server when ne
 "Get the UID for a specific script file in my Godot 4.4 project"
 
 "Update UID references in my Godot project after upgrading to 4.4"
+
+"Run GUT tests in my Godot project and show me the results"
+
+"Discover all available test files in my project's test directory"
+
+"Create a new GUT test file for testing my player character movement"
+
+"Run specific GUT tests in the tests/player/ directory"
+
+"Create an advanced GUT test template with signal testing and mocking"
 ```
 
 ## Implementation Details
