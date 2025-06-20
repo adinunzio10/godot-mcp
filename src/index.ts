@@ -1511,14 +1511,7 @@ class GodotServer {
         },
       };
 
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return this.createSizeLimitedResponse(JSON.stringify(result, null, 2), 'project list');
     } catch (error: any) {
       return this.createErrorResponse(
         `Failed to list projects: ${error?.message || 'Unknown error'}`,
@@ -2651,14 +2644,7 @@ class GodotServer {
       // Parse the output to extract test results
       const testResults = this.parseGutTestOutput(stdout, stderr);
 
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(testResults, null, 2),
-          },
-        ],
-      };
+      return this.createSizeLimitedResponse(JSON.stringify(testResults, null, 2), 'test results');
     } catch (error: any) {
       return this.createErrorResponse(
         `Failed to run GUT tests: ${error?.message || 'Unknown error'}`,
@@ -2727,14 +2713,7 @@ class GodotServer {
         }
       };
 
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return this.createSizeLimitedResponse(JSON.stringify(result, null, 2), 'test discovery');
     } catch (error: any) {
       return this.createErrorResponse(
         `Failed to discover GUT tests: ${error?.message || 'Unknown error'}`,
