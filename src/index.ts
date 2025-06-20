@@ -91,7 +91,21 @@ class GodotServer {
     'file_path': 'filePath',
     'directory': 'directory',
     'recursive': 'recursive',
+    'offset': 'offset',
+    'limit': 'limit',
+    'max_depth': 'maxDepth',
+    'max_files': 'maxFiles',
+    'include_summary_only': 'includeSummaryOnly',
     'scene': 'scene',
+    'test_path': 'testPath',
+    'test_prefix': 'testPrefix',
+    'test_suffix': 'testSuffix',
+    'exit_on_success': 'exitOnSuccess',
+    'log_level': 'logLevel',
+    'junit_xml_file': 'junitXmlFile',
+    'test_directory': 'testDirectory',
+    'test_name': 'testName',
+    'template_type': 'templateType',
   };
 
   /**
@@ -737,7 +751,7 @@ class GodotServer {
         },
         {
           name: 'list_projects',
-          description: 'List Godot projects in a directory',
+          description: 'List Godot projects in a directory with pagination support',
           inputSchema: {
             type: 'object',
             properties: {
@@ -749,19 +763,39 @@ class GodotServer {
                 type: 'boolean',
                 description: 'Whether to search recursively (default: false)',
               },
+              offset: {
+                type: 'number',
+                description: 'Number of projects to skip (for pagination)',
+              },
+              limit: {
+                type: 'number',
+                description: 'Maximum number of projects to return (default: 100)',
+              },
             },
             required: ['directory'],
           },
         },
         {
           name: 'get_project_info',
-          description: 'Retrieve metadata about a Godot project',
+          description: 'Retrieve metadata about a Godot project with output limiting',
           inputSchema: {
             type: 'object',
             properties: {
               projectPath: {
                 type: 'string',
                 description: 'Path to the Godot project directory',
+              },
+              maxDepth: {
+                type: 'number',
+                description: 'Maximum directory depth to scan (default: 5)',
+              },
+              maxFiles: {
+                type: 'number',
+                description: 'Maximum number of files to count per category (default: 1000)',
+              },
+              includeSummaryOnly: {
+                type: 'boolean',
+                description: 'Return only summary statistics instead of detailed structure (default: false)',
               },
             },
             required: ['projectPath'],
@@ -934,6 +968,92 @@ class GodotServer {
             required: ['projectPath'],
           },
         },
+        {
+          name: 'run_gut_tests',
+          description: 'Run GUT (Godot Unit Testing) tests in a Godot project',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              projectPath: {
+                type: 'string',
+                description: 'Path to the Godot project directory',
+              },
+              testPath: {
+                type: 'string',
+                description: 'Optional: Specific test file or directory to run',
+              },
+              testPrefix: {
+                type: 'string',
+                description: 'Optional: Test file prefix (default: "test_")',
+              },
+              testSuffix: {
+                type: 'string',
+                description: 'Optional: Test file suffix (default: ".gd")',
+              },
+              exitOnSuccess: {
+                type: 'boolean',
+                description: 'Optional: Exit only if all tests pass (default: true)',
+              },
+              logLevel: {
+                type: 'number',
+                description: 'Optional: Log level (0-3, default: 1)',
+              },
+              junitXmlFile: {
+                type: 'string',
+                description: 'Optional: Path to export JUnit XML results',
+              },
+            },
+            required: ['projectPath'],
+          },
+        },
+        {
+          name: 'discover_gut_tests',
+          description: 'Discover available GUT tests in a Godot project',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              projectPath: {
+                type: 'string',
+                description: 'Path to the Godot project directory',
+              },
+              testDirectory: {
+                type: 'string',
+                description: 'Optional: Directory to search for tests (default: "test")',
+              },
+              recursive: {
+                type: 'boolean',
+                description: 'Optional: Search recursively (default: true)',
+              },
+            },
+            required: ['projectPath'],
+          },
+        },
+        {
+          name: 'create_gut_test',
+          description: 'Create a new GUT test file',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              projectPath: {
+                type: 'string',
+                description: 'Path to the Godot project directory',
+              },
+              testPath: {
+                type: 'string',
+                description: 'Path where the test file will be created (relative to project)',
+              },
+              testName: {
+                type: 'string',
+                description: 'Name of the test class',
+              },
+              templateType: {
+                type: 'string',
+                description: 'Optional: Template type (basic, advanced, default: "basic")',
+              },
+            },
+            required: ['projectPath', 'testPath', 'testName'],
+          },
+        },
       ],
     }));
 
@@ -969,6 +1089,12 @@ class GodotServer {
           return await this.handleGetUid(request.params.arguments);
         case 'update_project_uids':
           return await this.handleUpdateProjectUids(request.params.arguments);
+        case 'run_gut_tests':
+          return await this.handleRunGutTests(request.params.arguments);
+        case 'discover_gut_tests':
+          return await this.handleDiscoverGutTests(request.params.arguments);
+        case 'create_gut_test':
+          return await this.handleCreateGutTest(request.params.arguments);
         default:
           throw new McpError(
             ErrorCode.MethodNotFound,
@@ -1366,13 +1492,30 @@ class GodotServer {
       }
 
       const recursive = args.recursive === true;
-      const projects = this.findGodotProjects(args.directory, recursive);
+      const offset = args.offset || 0;
+      const limit = args.limit || 100;
+      
+      const allProjects = this.findGodotProjects(args.directory, recursive);
+      const totalProjects = allProjects.length;
+      
+      // Apply pagination
+      const paginatedProjects = allProjects.slice(offset, offset + limit);
+      
+      const result = {
+        projects: paginatedProjects,
+        pagination: {
+          offset: offset,
+          limit: limit,
+          total: totalProjects,
+          hasMore: offset + limit < totalProjects,
+        },
+      };
 
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(projects, null, 2),
+            text: JSON.stringify(result, null, 2),
           },
         ],
       };
@@ -1392,7 +1535,12 @@ class GodotServer {
    * @param projectPath Path to the Godot project
    * @returns Promise resolving to an object with counts of scenes, scripts, assets, and other files
    */
-  private getProjectStructureAsync(projectPath: string): Promise<any> {
+  private getProjectStructureAsync(
+    projectPath: string, 
+    maxDepth: number = 5, 
+    maxFiles: number = 1000, 
+    includeSummaryOnly: boolean = false
+  ): Promise<any> {
     return new Promise((resolve) => {
       try {
         const structure = {
@@ -1402,10 +1550,32 @@ class GodotServer {
           other: 0,
         };
 
-        const scanDirectory = (currentPath: string) => {
+        let totalFilesCounted = 0;
+        let maxFilesReached = false;
+        let maxDepthReached = false;
+
+        const scanDirectory = (currentPath: string, currentDepth: number = 0) => {
+          // Check depth limit
+          if (currentDepth > maxDepth) {
+            maxDepthReached = true;
+            return;
+          }
+          
+          // Check if we've already reached the max files limit
+          if (totalFilesCounted >= maxFiles) {
+            maxFilesReached = true;
+            return;
+          }
+
           const entries = readdirSync(currentPath, { withFileTypes: true });
           
           for (const entry of entries) {
+            // Early exit if max files reached
+            if (totalFilesCounted >= maxFiles) {
+              maxFilesReached = true;
+              break;
+            }
+
             const entryPath = join(currentPath, entry.name);
             
             // Skip hidden files and directories
@@ -1414,9 +1584,11 @@ class GodotServer {
             }
             
             if (entry.isDirectory()) {
-              // Recursively scan subdirectories
-              scanDirectory(entryPath);
+              // Recursively scan subdirectories with depth tracking
+              scanDirectory(entryPath, currentDepth + 1);
             } else if (entry.isFile()) {
+              totalFilesCounted++;
+              
               // Count file by extension
               const ext = entry.name.split('.').pop()?.toLowerCase();
               
@@ -1434,8 +1606,36 @@ class GodotServer {
         };
         
         // Start scanning from the project root
-        scanDirectory(projectPath);
-        resolve(structure);
+        scanDirectory(projectPath, 0);
+
+        // Build result based on includeSummaryOnly flag
+        const result = includeSummaryOnly ? {
+          totalFiles: totalFilesCounted,
+          summary: {
+            scenes: structure.scenes,
+            scripts: structure.scripts,
+            assets: structure.assets,
+            other: structure.other,
+            totalCounted: structure.scenes + structure.scripts + structure.assets + structure.other,
+          },
+          limitations: {
+            maxDepthReached,
+            maxFilesReached,
+            actualDepthScanned: maxDepthReached ? maxDepth : 'full',
+            actualFilesScanned: totalFilesCounted,
+          }
+        } : {
+          ...structure,
+          totalFiles: totalFilesCounted,
+          limitations: {
+            maxDepthReached,
+            maxFilesReached,
+            actualDepthScanned: maxDepthReached ? maxDepth : 'full',
+            actualFilesScanned: totalFilesCounted,
+          }
+        };
+
+        resolve(result);
       } catch (error) {
         this.logDebug(`Error getting project structure asynchronously: ${error}`);
         resolve({ 
@@ -1503,8 +1703,17 @@ class GodotServer {
       const execOptions = { timeout: 10000 }; // 10 second timeout
       const { stdout } = await execAsync(`"${this.godotPath}" --version`, execOptions);
   
-      // Get project structure using the recursive method
-      const projectStructure = await this.getProjectStructureAsync(args.projectPath);
+      // Get project structure using the recursive method with limits
+      const maxDepth = args.maxDepth || 5;
+      const maxFiles = args.maxFiles || 1000;
+      const includeSummaryOnly = args.includeSummaryOnly || false;
+      
+      const projectStructure = await this.getProjectStructureAsync(
+        args.projectPath, 
+        maxDepth, 
+        maxFiles, 
+        includeSummaryOnly
+      );
   
       // Extract project name from project.godot file
       let projectName = basename(args.projectPath);
@@ -2128,6 +2337,117 @@ class GodotServer {
   }
 
   /**
+   * Maximum response size in characters to prevent oversized JSON responses
+   */
+  private readonly MAX_RESPONSE_SIZE = 50000;
+
+  /**
+   * Check and limit response size to prevent oversized JSON that could crash Claude Code
+   */
+  private limitResponseSize(content: string, context: string = 'output'): string {
+    if (content.length <= this.MAX_RESPONSE_SIZE) {
+      return content;
+    }
+
+    const truncateSize = this.MAX_RESPONSE_SIZE - 500; // Leave room for truncation message
+    const truncated = content.substring(0, truncateSize);
+    const totalLines = content.split('\n').length;
+    const shownLines = truncated.split('\n').length;
+    
+    const truncationMessage = `\n\n[TRUNCATED: Response was ${content.length} characters (${totalLines} lines). Showing first ${truncated.length} characters (${shownLines} lines) to prevent oversized response. Use pagination or filtering parameters to get specific portions of the output.]`;
+    
+    return truncated + truncationMessage;
+  }
+
+  /**
+   * Create a response with automatic size limiting
+   */
+  private createSizeLimitedResponse(content: string, context: string = 'output') {
+    const limitedContent = this.limitResponseSize(content, context);
+    
+    return {
+      content: [
+        {
+          type: 'text',
+          text: limitedContent,
+        },
+      ],
+    };
+  }
+
+  /**
+   * Parse resave_resources output to create a summary
+   */
+  private parseResaveResourcesOutput(stdout: string): any {
+    const lines = stdout.split('\n');
+    let summary = {
+      status: 'completed',
+      scenesProcessed: 0,
+      scenesSuccessful: 0,
+      scenesWithErrors: 0,
+      scriptsMissingUIDs: 0,
+      uidsGenerated: 0,
+      errors: [] as string[],
+      message: 'Project UIDs updated successfully',
+    };
+
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      
+      // Parse summary information from debug output
+      if (trimmedLine.includes('Scenes processed:')) {
+        const match = trimmedLine.match(/Scenes processed:\s*(\d+)/);
+        if (match) summary.scenesProcessed = parseInt(match[1], 10);
+      }
+      
+      if (trimmedLine.includes('Scenes successfully saved:')) {
+        const match = trimmedLine.match(/Scenes successfully saved:\s*(\d+)/);
+        if (match) summary.scenesSuccessful = parseInt(match[1], 10);
+      }
+      
+      if (trimmedLine.includes('Scenes with errors:')) {
+        const match = trimmedLine.match(/Scenes with errors:\s*(\d+)/);
+        if (match) summary.scenesWithErrors = parseInt(match[1], 10);
+      }
+      
+      if (trimmedLine.includes('Scripts/shaders missing UIDs:')) {
+        const match = trimmedLine.match(/Scripts\/shaders missing UIDs:\s*(\d+)/);
+        if (match) summary.scriptsMissingUIDs = parseInt(match[1], 10);
+      }
+      
+      if (trimmedLine.includes('UIDs successfully generated:')) {
+        const match = trimmedLine.match(/UIDs successfully generated:\s*(\d+)/);
+        if (match) summary.uidsGenerated = parseInt(match[1], 10);
+      }
+
+      // Collect error messages
+      if (trimmedLine.includes('[ERROR]') || trimmedLine.includes('Failed to')) {
+        summary.errors.push(trimmedLine);
+      }
+    }
+
+    // Determine overall status
+    if (summary.errors.length > 0 || summary.scenesWithErrors > 0) {
+      summary.status = 'completed_with_errors';
+      summary.message = `Project UIDs updated with ${summary.errors.length + summary.scenesWithErrors} errors`;
+    }
+
+    // If we didn't find any structured output, provide basic parsing
+    if (summary.scenesProcessed === 0 && summary.scenesSuccessful === 0) {
+      // Count operations mentioned in the output
+      const sceneMatches = stdout.match(/Processing scene:/g);
+      const successMatches = stdout.match(/Scene loaded successfully/g);
+      const errorMatches = stdout.match(/Failed to|Error:/g);
+      
+      summary.scenesProcessed = sceneMatches ? sceneMatches.length : 0;
+      summary.scenesSuccessful = successMatches ? successMatches.length : 0;
+      summary.scenesWithErrors = errorMatches ? errorMatches.length : 0;
+    }
+
+    return summary;
+  }
+
+  /**
    * Handle the update_project_uids tool
    */
   private async handleUpdateProjectUids(args: any) {
@@ -2207,11 +2527,14 @@ class GodotServer {
         );
       }
 
+      // Parse and summarize the output to prevent oversized responses
+      const summary = this.parseResaveResourcesOutput(stdout);
+
       return {
         content: [
           {
             type: 'text',
-            text: `Project UIDs updated successfully.\n\nOutput: ${stdout}`,
+            text: JSON.stringify(summary, null, 2),
           },
         ],
       };
@@ -2225,6 +2548,393 @@ class GodotServer {
         ]
       );
     }
+  }
+
+  /**
+   * Handle the run_gut_tests tool
+   */
+  private async handleRunGutTests(args: any) {
+    // Normalize parameters to camelCase
+    args = this.normalizeParameters(args);
+    
+    if (!args.projectPath) {
+      return this.createErrorResponse(
+        'Project path is required',
+        ['Provide a valid path to a Godot project directory']
+      );
+    }
+
+    if (!this.validatePath(args.projectPath)) {
+      return this.createErrorResponse(
+        'Invalid project path',
+        ['Provide a valid path without ".." or other potentially unsafe characters']
+      );
+    }
+
+    try {
+      // Check if the project directory exists and contains a project.godot file
+      const projectFile = join(args.projectPath, 'project.godot');
+      if (!existsSync(projectFile)) {
+        return this.createErrorResponse(
+          `Not a valid Godot project: ${args.projectPath}`,
+          [
+            'Ensure the path points to a directory containing a project.godot file',
+            'Use list_projects to find valid Godot projects',
+          ]
+        );
+      }
+
+      // Check if GUT is installed in the project
+      const gutPath = join(args.projectPath, 'addons', 'gut');
+      if (!existsSync(gutPath)) {
+        return this.createErrorResponse(
+          'GUT addon not found in project',
+          [
+            'Install GUT addon from the Asset Library',
+            'Ensure addons/gut directory exists in the project',
+            'Download GUT from https://github.com/bitwes/Gut',
+          ]
+        );
+      }
+
+      // Ensure godotPath is set
+      if (!this.godotPath) {
+        await this.detectGodotPath();
+        if (!this.godotPath) {
+          return this.createErrorResponse(
+            'Could not find a valid Godot executable path',
+            [
+              'Ensure Godot is installed correctly',
+              'Set GODOT_PATH environment variable to specify the correct path',
+            ]
+          );
+        }
+      }
+
+      // Build GUT command arguments
+      const gutArgs = ['-d', '-s', '--path', args.projectPath, 'addons/gut/gut_cmdln.gd'];
+
+      // Add optional parameters
+      if (args.testPath) {
+        if (args.testPath.endsWith('.gd')) {
+          gutArgs.push('-gtest=' + args.testPath);
+        } else {
+          gutArgs.push('-gdir=' + args.testPath);
+        }
+      }
+
+      if (args.testPrefix) {
+        gutArgs.push('-gprefix=' + args.testPrefix);
+      }
+
+      if (args.testSuffix) {
+        gutArgs.push('-gsuffix=' + args.testSuffix);
+      }
+
+      if (args.exitOnSuccess !== false) {
+        gutArgs.push('-gexit');
+      }
+
+      if (args.logLevel !== undefined) {
+        gutArgs.push('-glog=' + args.logLevel);
+      }
+
+      if (args.junitXmlFile) {
+        gutArgs.push('-gjunit_xml_file=' + args.junitXmlFile);
+      }
+
+      this.logDebug(`Running GUT tests with command: ${this.godotPath} ${gutArgs.join(' ')}`);
+
+      // Execute GUT tests
+      const { stdout, stderr } = await execAsync(`"${this.godotPath}" ${gutArgs.join(' ')}`);
+
+      // Parse the output to extract test results
+      const testResults = this.parseGutTestOutput(stdout, stderr);
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(testResults, null, 2),
+          },
+        ],
+      };
+    } catch (error: any) {
+      return this.createErrorResponse(
+        `Failed to run GUT tests: ${error?.message || 'Unknown error'}`,
+        [
+          'Ensure Godot is installed correctly',
+          'Check if GUT addon is properly installed',
+          'Verify the project path is accessible',
+          'Check if test files exist in the specified path',
+        ]
+      );
+    }
+  }
+
+  /**
+   * Handle the discover_gut_tests tool
+   */
+  private async handleDiscoverGutTests(args: any) {
+    // Normalize parameters to camelCase
+    args = this.normalizeParameters(args);
+    
+    if (!args.projectPath) {
+      return this.createErrorResponse(
+        'Project path is required',
+        ['Provide a valid path to a Godot project directory']
+      );
+    }
+
+    if (!this.validatePath(args.projectPath)) {
+      return this.createErrorResponse(
+        'Invalid project path',
+        ['Provide a valid path without ".." or other potentially unsafe characters']
+      );
+    }
+
+    try {
+      // Check if the project directory exists and contains a project.godot file
+      const projectFile = join(args.projectPath, 'project.godot');
+      if (!existsSync(projectFile)) {
+        return this.createErrorResponse(
+          `Not a valid Godot project: ${args.projectPath}`,
+          [
+            'Ensure the path points to a directory containing a project.godot file',
+            'Use list_projects to find valid Godot projects',
+          ]
+        );
+      }
+
+      // Check if GUT is installed
+      const gutPath = join(args.projectPath, 'addons', 'gut');
+      const gutInstalled = existsSync(gutPath);
+
+      // Default test directory
+      const testDirectory = args.testDirectory || 'test';
+      const testPath = join(args.projectPath, testDirectory);
+      
+      const testFiles = this.findGutTestFiles(testPath, args.recursive !== false);
+
+      const result = {
+        gutInstalled,
+        gutPath: gutInstalled ? gutPath : null,
+        testDirectory,
+        testFiles,
+        summary: {
+          totalTestFiles: testFiles.length,
+          testDirectoryExists: existsSync(testPath),
+        }
+      };
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error: any) {
+      return this.createErrorResponse(
+        `Failed to discover GUT tests: ${error?.message || 'Unknown error'}`,
+        [
+          'Ensure the project path is accessible',
+          'Check if the test directory exists',
+          'Verify you have read permissions for the project directory',
+        ]
+      );
+    }
+  }
+
+  /**
+   * Handle the create_gut_test tool
+   */
+  private async handleCreateGutTest(args: any) {
+    // Normalize parameters to camelCase
+    args = this.normalizeParameters(args);
+    
+    if (!args.projectPath || !args.testPath || !args.testName) {
+      return this.createErrorResponse(
+        'Missing required parameters',
+        ['Provide projectPath, testPath, and testName']
+      );
+    }
+
+    if (!this.validatePath(args.projectPath) || !this.validatePath(args.testPath)) {
+      return this.createErrorResponse(
+        'Invalid path',
+        ['Provide valid paths without ".." or other potentially unsafe characters']
+      );
+    }
+
+    try {
+      // Check if the project directory exists and contains a project.godot file
+      const projectFile = join(args.projectPath, 'project.godot');
+      if (!existsSync(projectFile)) {
+        return this.createErrorResponse(
+          `Not a valid Godot project: ${args.projectPath}`,
+          [
+            'Ensure the path points to a directory containing a project.godot file',
+            'Use list_projects to find valid Godot projects',
+          ]
+        );
+      }
+
+      // Check if GUT is installed
+      const gutPath = join(args.projectPath, 'addons', 'gut');
+      if (!existsSync(gutPath)) {
+        return this.createErrorResponse(
+          'GUT addon not found in project',
+          [
+            'Install GUT addon from the Asset Library',
+            'Ensure addons/gut directory exists in the project',
+            'Download GUT from https://github.com/bitwes/Gut',
+          ]
+        );
+      }
+
+      // Prepare parameters for the operation
+      const params = {
+        testPath: args.testPath,
+        testName: args.testName,
+        templateType: args.templateType || 'basic',
+      };
+
+      // Execute the operation using the Godot operations script
+      const { stdout, stderr } = await this.executeOperation('create_gut_test', params, args.projectPath);
+
+      if (stderr && stderr.includes('Failed to')) {
+        return this.createErrorResponse(
+          `Failed to create GUT test: ${stderr}`,
+          [
+            'Check if the test path is valid',
+            'Ensure you have write permissions to the test directory',
+            'Verify the test name is valid',
+          ]
+        );
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `GUT test created successfully at: ${args.testPath}\n\nOutput: ${stdout}`,
+          },
+        ],
+      };
+    } catch (error: any) {
+      return this.createErrorResponse(
+        `Failed to create GUT test: ${error?.message || 'Unknown error'}`,
+        [
+          'Ensure Godot is installed correctly',
+          'Check if the GODOT_PATH environment variable is set correctly',
+          'Verify the project path is accessible',
+          'Ensure GUT addon is properly installed',
+        ]
+      );
+    }
+  }
+
+  /**
+   * Parse GUT test output to extract test results
+   */
+  private parseGutTestOutput(stdout: string, stderr: string): any {
+    const lines = stdout.split('\n');
+    let testResults = {
+      summary: {
+        totalTests: 0,
+        passedTests: 0,
+        failedTests: 0,
+        pendingTests: 0,
+        skippedTests: 0,
+        runtime: 0,
+      },
+      testFiles: [] as any[],
+      failures: [] as any[],
+      output: stdout,
+      errors: stderr,
+    };
+
+    // Parse GUT output for test results
+    // GUT typically outputs results in a specific format
+    for (const line of lines) {
+      // Extract test summary information
+      if (line.includes('Tests:')) {
+        const match = line.match(/Tests:\s*(\d+)\s*Passed:\s*(\d+)\s*Failed:\s*(\d+)/);
+        if (match) {
+          testResults.summary.totalTests = parseInt(match[1], 10);
+          testResults.summary.passedTests = parseInt(match[2], 10);
+          testResults.summary.failedTests = parseInt(match[3], 10);
+        }
+      }
+
+      // Extract runtime information
+      if (line.includes('Runtime:')) {
+        const match = line.match(/Runtime:\s*([\d.]+)/);
+        if (match) {
+          testResults.summary.runtime = parseFloat(match[1]);
+        }
+      }
+
+      // Extract test file information
+      if (line.includes('Running tests in:') || line.includes('Test script:')) {
+        const testFile = line.split(':')[1]?.trim();
+        if (testFile) {
+          testResults.testFiles.push({
+            path: testFile,
+            status: 'completed',
+          });
+        }
+      }
+
+      // Extract failure information
+      if (line.includes('FAILED:') || line.includes('ERROR:')) {
+        testResults.failures.push({
+          message: line,
+          type: line.includes('FAILED:') ? 'failure' : 'error',
+        });
+      }
+    }
+
+    return testResults;
+  }
+
+  /**
+   * Find GUT test files in a directory
+   */
+  private findGutTestFiles(directory: string, recursive: boolean): Array<{ path: string; name: string; relativePath: string }> {
+    const testFiles: Array<{ path: string; name: string; relativePath: string }> = [];
+
+    if (!existsSync(directory)) {
+      return testFiles;
+    }
+
+    try {
+      const entries = readdirSync(directory, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const fullPath = join(directory, entry.name);
+
+        if (entry.isFile() && entry.name.startsWith('test_') && entry.name.endsWith('.gd')) {
+          testFiles.push({
+            path: fullPath,
+            name: entry.name,
+            relativePath: entry.name,
+          });
+        } else if (entry.isDirectory() && recursive && !entry.name.startsWith('.')) {
+          const subTests = this.findGutTestFiles(fullPath, true);
+          testFiles.push(...subTests.map(test => ({
+            ...test,
+            relativePath: join(entry.name, test.relativePath),
+          })));
+        }
+      }
+    } catch (error) {
+      this.logDebug(`Error reading test directory ${directory}: ${error}`);
+    }
+
+    return testFiles;
   }
 
   /**

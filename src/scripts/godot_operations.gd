@@ -71,6 +71,8 @@ func _init():
             get_uid(params)
         "resave_resources":
             resave_resources(params)
+        "create_gut_test":
+            create_gut_test(params)
         _:
             log_error("Unknown operation: " + operation)
             quit(1)
@@ -1190,3 +1192,186 @@ func save_scene(params):
             printerr("Failed to save scene: " + str(error))
     else:
         printerr("Failed to pack scene: " + str(result))
+
+
+# Create a new GUT test file
+func create_gut_test(params):
+    log_info("Creating GUT test file")
+    
+    var test_path = params.get("test_path", "")
+    var test_name = params.get("test_name", "")
+    var template_type = params.get("template_type", "basic")
+    
+    if test_path == "":
+        printerr("Failed to create GUT test: test_path is required")
+        quit(1)
+    
+    if test_name == "":
+        printerr("Failed to create GUT test: test_name is required")
+        quit(1)
+    
+    # Ensure test path ends with .gd
+    if not test_path.ends_with(".gd"):
+        test_path += ".gd"
+    
+    # Convert relative path to absolute
+    var full_path = "res://" + test_path
+    log_debug("Full test path: " + full_path)
+    
+    # Check if file already exists
+    if FileAccess.file_exists(full_path):
+        printerr("Failed to create GUT test: file already exists at " + full_path)
+        quit(1)
+    
+    # Create directory if it doesn't exist
+    var dir = DirAccess.open("res://")
+    var test_dir = full_path.get_base_dir()
+    if test_dir \!= "res://" and not dir.dir_exists(test_dir.substr(6)):  # Remove "res://" prefix
+        log_debug("Creating test directory: " + test_dir)
+        var error = dir.make_dir_recursive(test_dir.substr(6))  # Remove "res://" prefix
+        if error \!= OK:
+            printerr("Failed to create test directory: " + test_dir + ", error: " + str(error))
+            quit(1)
+    
+    # Generate test content based on template type
+    var test_content = ""
+    
+    match template_type:
+        "basic":
+            test_content = generate_basic_gut_test_template(test_name)
+        "advanced":
+            test_content = generate_advanced_gut_test_template(test_name)
+        _:
+            test_content = generate_basic_gut_test_template(test_name)
+    
+    # Write the test file
+    var file = FileAccess.open(full_path, FileAccess.WRITE)
+    if file == null:
+        printerr("Failed to create GUT test: cannot open file for writing: " + full_path)
+        quit(1)
+    
+    file.store_string(test_content)
+    file.close()
+    
+    # Verify the file was created
+    if FileAccess.file_exists(full_path):
+        log_info("GUT test file created successfully: " + full_path)
+        var absolute_path = ProjectSettings.globalize_path(full_path)
+        print("Absolute file path: " + absolute_path)
+    else:
+        printerr("Failed to create GUT test: file was not created at " + full_path)
+        quit(1)
+
+# Generate basic GUT test template
+func generate_basic_gut_test_template(test_name: String) -> String:
+    var template = """extends GutTest
+
+# Test class: {test_name}
+# Created with Godot MCP Server
+
+func before_each():
+	# Setup code that runs before each test
+	pass
+
+func after_each():
+	# Cleanup code that runs after each test
+	pass
+
+func test_example():
+	# Example test - replace with your actual tests
+	assert_eq(1 + 1, 2, "Basic math should work")
+
+func test_example_failure():
+	# Example test that can be used to verify test framework is working
+	# Remove or modify this test as needed
+	assert_true(true, "This test should always pass")
+
+# Add your test methods here
+# Test method names must start with 'test_'
+"""
+    return template.format({"test_name": test_name})
+
+# Generate advanced GUT test template
+func generate_advanced_gut_test_template(test_name: String) -> String:
+    var template = """extends GutTest
+
+# Test class: {test_name}
+# Created with Godot MCP Server
+
+var test_object
+var mock_object
+
+func before_all():
+	# Setup code that runs once before all tests in this script
+	pass
+
+func before_each():
+	# Setup code that runs before each test
+	test_object = null
+	mock_object = null
+
+func after_each():
+	# Cleanup code that runs after each test
+	if test_object \!= null:
+		test_object.queue_free()
+	if mock_object \!= null:
+		mock_object.queue_free()
+
+func after_all():
+	# Cleanup code that runs once after all tests in this script
+	pass
+
+func test_object_creation():
+	# Test object instantiation
+	test_object = Node.new()
+	assert_not_null(test_object, "Object should be created")
+	assert_is(test_object, Node, "Object should be a Node")
+
+func test_with_signal():
+	# Test signal emission
+	test_object = Node.new()
+	add_child(test_object)
+	
+	# Watch for a signal
+	watch_signals(test_object)
+	
+	# Trigger signal emission (example)
+	test_object.emit_signal("tree_entered")
+	
+	# Verify signal was emitted
+	assert_signal_emitted(test_object, "tree_entered", "Signal should be emitted")
+
+func test_async_operation():
+	# Test asynchronous operations
+	test_object = Node.new()
+	add_child(test_object)
+	
+	# Start an async operation
+	var timer = Timer.new()
+	timer.wait_time = 0.1
+	timer.one_shot = true
+	add_child(timer)
+	timer.start()
+	
+	# Wait for the timer to complete
+	await timer.timeout
+	
+	# Verify the operation completed
+	assert_true(timer.is_stopped(), "Timer should have stopped")
+
+func test_parameterized_example():
+	# Example of parameterized testing
+	var test_cases = [
+		{"input": 1, "expected": 2},
+		{"input": 2, "expected": 4},
+		{"input": 3, "expected": 6}
+	]
+	
+	for case in test_cases:
+		var result = case.input * 2
+		assert_eq(result, case.expected, "Input %s should result in %s" % [case.input, case.expected])
+
+# Add your test methods here
+# Test method names must start with 'test_'
+"""
+    return template.format({"test_name": test_name})
