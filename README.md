@@ -62,7 +62,10 @@ This direct feedback loop helps AI assistants like Claude understand what works 
 
 - **Launch Godot Editor**: Open the Godot editor for a specific project
 - **Run Godot Projects**: Execute Godot projects in debug mode
-- **Capture Debug Output**: Retrieve console output and error messages
+- **Capture Debug Output**: Retrieve console output and error messages with pagination support
+  - Paginated output retrieval to handle large debug logs
+  - Configurable buffer size limits to prevent memory issues
+  - Tail mode to get the most recent output by default
 - **Control Execution**: Start and stop Godot projects programmatically
 - **Get Godot Version**: Retrieve the installed Godot version
 - **List Godot Projects**: Find Godot projects in a specified directory
@@ -170,6 +173,30 @@ You can customize the server behavior with these environment variables:
 
 - `GODOT_PATH`: Path to the Godot executable (overrides automatic detection)
 - `DEBUG`: Set to "true" to enable detailed server-side debug logging
+
+### Advanced Configuration
+
+The server can be configured programmatically when using it as a module:
+
+```javascript
+const server = new GodotServer({
+  godotPath: '/path/to/godot',           // Custom Godot executable path
+  debugMode: true,                       // Enable debug logging
+  godotDebugMode: true,                  // Enable Godot debug mode
+  strictPathValidation: false,           // Strict path validation mode
+  maxOutputBufferSize: 10000             // Maximum lines to store in output buffers (default: 10000)
+});
+```
+
+#### Output Pagination
+
+When debugging Godot projects that generate large amounts of output, the `get_debug_output` tool supports pagination:
+
+- `offset`: Starting line number (0-based)
+- `limit`: Maximum number of lines to return (default: 1000)
+- `tail`: If true, return the last N lines (default: true)
+
+This prevents issues with oversized responses that could cause the MCP connection to fail.
 
 ## Example Prompts
 

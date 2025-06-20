@@ -50,6 +50,7 @@ interface GodotServerConfig {
   debugMode?: boolean;
   godotDebugMode?: boolean;
   strictPathValidation?: boolean; // New option to control path validation behavior
+  maxOutputBufferSize?: number; // Maximum number of lines to store in output/error buffers
 }
 
 /**
@@ -69,6 +70,7 @@ class GodotServer {
   private operationsScriptPath: string;
   private validatedPaths: Map<string, boolean> = new Map();
   private strictPathValidation: boolean = false;
+  private maxOutputBufferSize: number = 10000; // Default to 10,000 lines
 
   /**
    * Parameter name mappings between snake_case and camelCase
@@ -116,6 +118,9 @@ class GodotServer {
       }
       if (config.strictPathValidation !== undefined) {
         this.strictPathValidation = config.strictPathValidation;
+      }
+      if (config.maxOutputBufferSize !== undefined && config.maxOutputBufferSize > 0) {
+        this.maxOutputBufferSize = config.maxOutputBufferSize;
       }
 
       // Store and validate custom Godot path if provided
@@ -692,10 +697,23 @@ class GodotServer {
         },
         {
           name: 'get_debug_output',
-          description: 'Get the current debug output and errors',
+          description: 'Get the current debug output and errors with pagination support',
           inputSchema: {
             type: 'object',
-            properties: {},
+            properties: {
+              offset: {
+                type: 'number',
+                description: 'Starting line number (0-based)',
+              },
+              limit: {
+                type: 'number',
+                description: 'Maximum number of lines to return (default: 1000)',
+              },
+              tail: {
+                type: 'boolean',
+                description: 'If true, return the last N lines (default: true)',
+              },
+            },
             required: [],
           },
         },
@@ -928,7 +946,7 @@ class GodotServer {
         case 'run_project':
           return await this.handleRunProject(request.params.arguments);
         case 'get_debug_output':
-          return await this.handleGetDebugOutput();
+          return await this.handleGetDebugOutput(request.params.arguments);
         case 'stop_project':
           return await this.handleStopProject();
         case 'get_godot_version':
@@ -1094,6 +1112,14 @@ class GodotServer {
       process.stdout?.on('data', (data: Buffer) => {
         const lines = data.toString().split('\n');
         output.push(...lines);
+        
+        // Trim buffer if it exceeds maximum size
+        if (output.length > this.maxOutputBufferSize) {
+          const excessLines = output.length - this.maxOutputBufferSize;
+          output.splice(0, excessLines);
+          this.logDebug(`[Godot stdout] Trimmed ${excessLines} lines from output buffer`);
+        }
+        
         lines.forEach((line: string) => {
           if (line.trim()) this.logDebug(`[Godot stdout] ${line}`);
         });
@@ -1102,6 +1128,14 @@ class GodotServer {
       process.stderr?.on('data', (data: Buffer) => {
         const lines = data.toString().split('\n');
         errors.push(...lines);
+        
+        // Trim buffer if it exceeds maximum size
+        if (errors.length > this.maxOutputBufferSize) {
+          const excessLines = errors.length - this.maxOutputBufferSize;
+          errors.splice(0, excessLines);
+          this.logDebug(`[Godot stderr] Trimmed ${excessLines} lines from error buffer`);
+        }
+        
         lines.forEach((line: string) => {
           if (line.trim()) this.logDebug(`[Godot stderr] ${line}`);
         });
@@ -1147,7 +1181,7 @@ class GodotServer {
   /**
    * Handle the get_debug_output tool
    */
-  private async handleGetDebugOutput() {
+  private async handleGetDebugOutput(args: any = {}) {
     if (!this.activeProcess) {
       return this.createErrorResponse(
         'No active Godot process.',
@@ -1158,14 +1192,49 @@ class GodotServer {
       );
     }
 
+    // Parse pagination parameters with defaults
+    const limit = args.limit || 1000;
+    const offset = args.offset || 0;
+    const tail = args.tail !== false; // Default to true
+
+    const totalOutput = this.activeProcess.output.length;
+    const totalErrors = this.activeProcess.errors.length;
+
+    let outputSlice: string[];
+    let errorsSlice: string[];
+    let actualOffset: number;
+
+    if (tail && offset === 0) {
+      // Tail mode: get the last N lines
+      actualOffset = Math.max(0, totalOutput - limit);
+      outputSlice = this.activeProcess.output.slice(-limit);
+      errorsSlice = this.activeProcess.errors.slice(-limit);
+    } else {
+      // Regular pagination mode
+      actualOffset = offset;
+      outputSlice = this.activeProcess.output.slice(offset, offset + limit);
+      errorsSlice = this.activeProcess.errors.slice(offset, offset + limit);
+    }
+
+    const hasMoreOutput = (actualOffset + outputSlice.length) < totalOutput;
+    const hasMoreErrors = (actualOffset + errorsSlice.length) < totalErrors;
+
     return {
       content: [
         {
           type: 'text',
           text: JSON.stringify(
             {
-              output: this.activeProcess.output,
-              errors: this.activeProcess.errors,
+              output: outputSlice,
+              errors: errorsSlice,
+              pagination: {
+                offset: actualOffset,
+                limit: limit,
+                totalOutput: totalOutput,
+                totalErrors: totalErrors,
+                hasMore: hasMoreOutput || hasMoreErrors,
+                tail: tail && offset === 0,
+              },
             },
             null,
             2
@@ -1195,6 +1264,11 @@ class GodotServer {
     const errors = this.activeProcess.errors;
     this.activeProcess = null;
 
+    // Return only the last 1000 lines to avoid oversized responses
+    const maxLines = 1000;
+    const outputTail = output.slice(-maxLines);
+    const errorsTail = errors.slice(-maxLines);
+
     return {
       content: [
         {
@@ -1202,8 +1276,15 @@ class GodotServer {
           text: JSON.stringify(
             {
               message: 'Godot project stopped',
-              finalOutput: output,
-              finalErrors: errors,
+              finalOutput: outputTail,
+              finalErrors: errorsTail,
+              summary: {
+                totalOutputLines: output.length,
+                totalErrorLines: errors.length,
+                outputTruncated: output.length > maxLines,
+                errorsTruncated: errors.length > maxLines,
+                maxLinesReturned: maxLines,
+              },
             },
             null,
             2
@@ -2177,7 +2258,13 @@ class GodotServer {
         }
       }
 
-      console.log(`[SERVER] Using Godot at: ${this.godotPath}`);
+      console.log(JSON.stringify({
+        jsonrpc: "2.0",
+        method: "server/log",
+        params: {
+          message: `Using Godot at: ${this.godotPath}`
+        }
+      }));
 
       const transport = new StdioServerTransport();
       await this.server.connect(transport);
